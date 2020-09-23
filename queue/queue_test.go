@@ -557,9 +557,9 @@ func UnorderedTest(bctx context.Context, t *testing.T, test QueueTestCase, runne
 	}
 
 	statCounter := 0
-	for stat := range q.Results(ctx) {
+	for job := range q.Results(ctx) {
 		statCounter++
-		assert.True(t, jobs.ID() != "")
+		assert.True(t, job.ID() != "")
 	}
 	assert.Equal(t, numJobs, statCounter, fmt.Sprintf("want jobStats for every job"))
 
