@@ -214,7 +214,6 @@ func (b *Base) SetStatus(s amboy.JobStatusInfo) {
 	defer b.mutex.Unlock()
 
 	b.status = s
-
 }
 
 // TimeInfo returns the job's TimeInfo object. The runner

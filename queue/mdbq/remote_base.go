@@ -292,13 +292,11 @@ func (q *remoteBase) Start(ctx context.Context) error {
 		return errors.New("cannot start queue with an uninitialized runner")
 	}
 
-	err := q.runner.Start(ctx)
-	if err != nil {
+	if err := q.runner.Start(ctx); err != nil {
 		return errors.Wrap(err, "problem starting runner in remote queue")
 	}
 
-	err = q.driver.Open(ctx)
-	if err != nil {
+	if err = q.driver.Open(ctx); err != nil {
 		return errors.Wrap(err, "problem starting driver in remote queue")
 	}
 
