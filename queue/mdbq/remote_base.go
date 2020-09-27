@@ -159,8 +159,7 @@ func (q *remoteBase) Complete(ctx context.Context, j amboy.Job) {
 				End:   time.Now(),
 			})
 
-			err = q.driver.Complete(ctx, j)
-			if err != nil {
+			if err = q.driver.Complete(ctx, j); err != nil {
 				if time.Since(startAt) > time.Minute+q.Info().LockTimeout {
 					grip.Warning(message.WrapError(err, message.Fields{
 						"job_id":      id,
