@@ -617,15 +617,14 @@ func (d *mongoDriver) getNextQuery() bson.M {
 	d.mu.RUnlock()
 	now := time.Now()
 	qd := bson.M{
+		"status.completed": false,
 		"$or": []bson.M{
 			{
-				"status.completed": false,
-				"status.in_prog":   false,
+				"status.in_prog": false,
 			},
 			{
-				"status.completed": false,
-				"status.in_prog":   true,
-				"status.mod_ts":    bson.M{"$lte": now.Add(-lockTimeout)},
+				"status.in_prog": true,
+				"status.mod_ts":  bson.M{"$lte": now.Add(-lockTimeout)},
 			},
 		},
 	}

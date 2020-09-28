@@ -62,8 +62,8 @@ func MakeJobInterchange(j amboy.Job, convertTo Marshaler) (*JobInterchange, erro
 	}
 
 	output.Status.ID = output.Name
-	output.Dependency.ID = output.Name
 	output.TimeInfo.ID = output.Name
+	output.Dependency.ID = output.Name
 
 	return output, nil
 }

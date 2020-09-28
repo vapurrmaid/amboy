@@ -14,7 +14,7 @@ require (
 	github.com/deciduosity/poplar v0.0.0-20200522022346-28353d080bd9
 	github.com/google/uuid v1.1.1
 	github.com/jmoiron/sqlx v1.2.0
-	github.com/lib/pq v1.0.0
+	github.com/lib/pq v1.8.0
 	github.com/mattn/go-isatty v0.0.12 // indirect
 	github.com/pkg/errors v0.9.1
 	github.com/sergi/go-diff v1.1.0 // indirect

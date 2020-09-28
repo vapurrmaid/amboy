@@ -13,13 +13,14 @@ import (
 	"github.com/deciduosity/amboy"
 	"github.com/deciduosity/amboy/job"
 	"github.com/deciduosity/amboy/pool"
+	"github.com/deciduosity/amboy/queue"
 	"github.com/deciduosity/amboy/registry"
 	"github.com/deciduosity/grip"
 	"github.com/deciduosity/grip/message"
 	"github.com/deciduosity/grip/recovery"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
-	"github.com/lib/pg"
+	"github.com/lib/pq"
 	"github.com/pkg/errors"
 )
 
@@ -27,7 +28,7 @@ func init() {
 	job.RegisterDefaultJobs()
 }
 
-type queue struct {
+type sqlQueue struct {
 	db         *sqlx.DB
 	id         string
 	started    bool
@@ -62,19 +63,34 @@ func (opts *Options) Validate() error {
 	if opts.PoolSize == 0 {
 		opts.PoolSize = runtime.NumCPU()
 	}
+	if opts.WaitInterval == 0 {
+		opts.WaitInterval = 100 * time.Millisecond
+
+	}
+
 	return nil
 }
 
+// NewQueue produces a new SQL-database backed queue. Broadly similar
+// to the MongoDB implementation, this queue is available only in
+// "unordered" varient (e.g. dependencies are not considered in
+// dispatching order,) but can respect settings including: scopes,
+// priority, WaitUntil, DispatchBy.
+//
+// All job implementations *must* be JSON serializable, and the queue
+// implementation assumes that the dependency Manager (and its edges)
+// are immutable after the job is Put into the queue. Similarly, jobs
+// must treat the Error array in the amboy.JobStatuseInfo as
+// append-only.
 func NewQueue(db *sqlx.DB, opts Options) (amboy.Queue, error) {
 	if err := opts.Validate(); err != nil {
 		return nil, errors.WithStack(err)
 	}
 
-	q := &queue{
-		opts:        opts,
-		db:          db,
-		id:          fmt.Sprintf("%s.%s", opts.Name, uuid.New().String()),
-		lockTimeout: opts.LockTimeout,
+	q := &sqlQueue{
+		opts: opts,
+		db:   db,
+		id:   fmt.Sprintf("%s.%s", opts.Name, uuid.New().String()),
 	}
 
 	if err := q.SetRunner(pool.NewLocalWorkers(opts.PoolSize, q)); err != nil {
@@ -90,14 +106,14 @@ func NewQueue(db *sqlx.DB, opts Options) (amboy.Queue, error) {
 	return q, nil
 }
 
-func (q *queue) ID() string {
+func (q *sqlQueue) ID() string {
 	q.mutex.RLock()
 	defer q.mutex.RUnlock()
 
 	return q.id
 }
 
-func (q *queue) Start(ctx context.Context) error {
+func (q *sqlQueue) Start(ctx context.Context) error {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 
@@ -108,7 +124,6 @@ func (q *queue) Start(ctx context.Context) error {
 	if err := q.runner.Start(ctx); err != nil {
 		return errors.Wrap(err, "problem starting runner in remote queue")
 	}
-
 	q.started = true
 
 	return nil
@@ -118,20 +133,20 @@ func isPgDuplicateError(err error) bool {
 		return false
 	}
 
-	if pgerr, ok := err.(*pg.Error); ok && pgerr.Code == "23505" {
+	if pgerr, ok := err.(*pq.Error); ok && pgerr.Code == "23505" {
 		return true
 	}
 
 	return false
 }
 
-func (q *queue) Put(ctx context.Context, j amboy.Job) error {
+func (q *sqlQueue) Put(ctx context.Context, j amboy.Job) error {
 	payload, err := registry.MakeJobInterchange(j, json.Marshal)
 	if err != nil {
 		return errors.Wrap(err, "problem converting job to interchange format")
 	}
 
-	q.processJobForGroup(job)
+	q.processJobForGroup(payload)
 
 	tx, err := q.db.BeginTxx(ctx, nil)
 	if err != nil {
@@ -216,7 +231,7 @@ func (q *queue) Put(ctx context.Context, j amboy.Job) error {
 	return nil
 }
 
-func (q *queue) Get(ctx context.Context, id string) (amboy.Job, bool) {
+func (q *sqlQueue) Get(ctx context.Context, id string) (amboy.Job, bool) {
 	tx, err := q.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return nil, false
@@ -226,11 +241,12 @@ func (q *queue) Get(ctx context.Context, id string) (amboy.Job, bool) {
 	return q.getJobTx(ctx, tx, id)
 }
 
-func (q *queue) getJobTx(ctx context.Context, tx *sqlx.Tx, id string) (amboy.Job, bool) {
+func (q *sqlQueue) getJobTx(ctx context.Context, tx *sqlx.Tx, id string) (amboy.Job, bool) {
 	payload := struct {
 		registry.JobInterchange
-		amboy.JobStatusInfo
 		registry.DependencyInterchange
+		amboy.JobStatusInfo
+		amboy.JobTimeInfo
 	}{}
 
 	id = q.getIDFromName(id)
@@ -243,39 +259,43 @@ func (q *queue) getJobTx(ctx context.Context, tx *sqlx.Tx, id string) (amboy.Job
 		return nil, false
 	}
 
+	payload.JobInterchange.Name = id
 	payload.JobInterchange.Status = payload.JobStatusInfo
 	payload.JobInterchange.Dependency = &payload.DependencyInterchange
-	q.processNameForUsers(payload)
+	payload.JobInterchange.TimeInfo = payload.JobTimeInfo
 
-	payload.JobInterchange.Status.ID = payload.Name
-	payload.JobInterchange.Dependency.ID = payload.Name
-	payload.JobInterchange.TimeInfo.ID = payload.Name
+	q.processNameForUsers(&payload.JobInterchange)
 
 	job, err := payload.JobInterchange.Resolve(json.Unmarshal)
 	if err != nil {
 		return nil, false
 	}
 
+	return job, true
 }
 
-func (q *queue) processNameForUsers(j *registry.JobInterchange) {
-	if !d.opts.UseGroups {
-		return
+func (q *sqlQueue) processNameForUsers(j *registry.JobInterchange) {
+	if q.opts.UseGroups {
+		j.Name = j.Name[len(q.opts.GroupName)+1:]
 	}
 
-	j.Name = j.Name[len(d.opts.GroupName)+1:]
+	j.Status.ID = j.Name
+	j.Dependency.ID = j.Name
+	j.TimeInfo.ID = j.Name
 }
 
-func (d *queue) processJobForGroup(j *registbry.JobInterchange) {
-	if !d.opts.UseGroups {
-		return
+func (d *sqlQueue) processJobForGroup(j *registry.JobInterchange) {
+	if d.opts.UseGroups {
+		j.Name = fmt.Sprintf("%s.%s", j.Group, j.Name)
+		j.Group = d.opts.GroupName
 	}
 
-	j.Group = d.opts.GroupName
-	j.Name = fmt.Sprintf("%s.%s", j.Group, j.Name)
+	j.Status.ID = j.Name
+	j.Dependency.ID = j.Name
+	j.TimeInfo.ID = j.Name
 }
 
-func (q *queue) getIDFromName(name string) string {
+func (q *sqlQueue) getIDFromName(name string) string {
 	if q.opts.UseGroups {
 		return fmt.Sprintf("%s.%s", q.opts.GroupName, name)
 	}
@@ -283,13 +303,13 @@ func (q *queue) getIDFromName(name string) string {
 	return name
 }
 
-func (q *queue) Save(ctx context.Context, j amboy.Job) error {
+func (q *sqlQueue) Save(ctx context.Context, j amboy.Job) error {
 	stat := j.Status()
 	stat.ErrorCount = len(stat.Errors)
 	stat.ModificationTime = time.Now()
 	j.SetStatus(stat)
 
-	job, err := registry.MakeJobInterchange(j, d.opts.Marshler)
+	job, err := registry.MakeJobInterchange(j, json.Marshal)
 	if err != nil {
 		return errors.Wrap(err, "problem converting job to interchange format")
 	}
@@ -299,12 +319,13 @@ func (q *queue) Save(ctx context.Context, j amboy.Job) error {
 	return errors.WithStack(q.doUpdate(ctx, job))
 }
 
-func (q *queue) Complete(ctx context.Context, j amboy.Job) {
+func (q *sqlQueue) Complete(ctx context.Context, j amboy.Job) {
 	q.dispatcher.Complete(ctx, j)
 
 	stat := j.Status()
 	stat.ErrorCount = len(stat.Errors)
 	stat.ModificationTime = time.Now()
+	stat.ModificationCount++
 	stat.Completed = true
 	stat.InProgress = false
 	j.SetStatus(stat)
@@ -312,7 +333,7 @@ func (q *queue) Complete(ctx context.Context, j amboy.Job) {
 		End: time.Now(),
 	})
 
-	job, err := registry.MakeJobInterchange(j, d.opts.Marshler)
+	job, err := registry.MakeJobInterchange(j, json.Marshal)
 	if err != nil {
 		return
 	}
@@ -373,30 +394,39 @@ RETRY:
 	}
 }
 
-func (q *queue) doUpdate(ctx context.Context, job *registry.JobInterchange) error {
-	d.processJobForGroup(job)
+func (q *sqlQueue) doUpdate(ctx context.Context, job *registry.JobInterchange) error {
+	q.processJobForGroup(job)
 
 	tx, err := q.db.BeginTxx(ctx, nil)
 	if err != nil {
 		return errors.Wrap(err, "problem starting transaction")
 	}
 	defer tx.Rollback()
-	timeoutTs := time.Now().Add(-d.opts.LockTimeout)
 
 	var count int
 	job.Status.ID = job.Name
 	job.Status.Owner = q.id
 
-	if err = tx.GetContext(ctx, &count, checkCanUpdate, job.Status); err != nil {
-		return errors.Wrapf(err, "problem doing lock query for %s", job.Name)
-	}
-
-	if count != 1 {
-		return errors.Wrapf(err, "do not have lock for job='%s'", job.Name)
-	}
-
-	_, err := tx.NamedExecContext(ctx, "DELETE FROM amboy.job_scopes WHERE id = $1", job.Name)
+	stmt, err := tx.PrepareNamedContext(ctx, checkCanUpdate)
 	if err != nil {
+		return errors.Wrapf(err, "problem reading count for lock query for %s", job.Name)
+	}
+	err = stmt.Get(&count, struct {
+		amboy.JobStatusInfo
+		LockTimeout time.Time `db:"lock_timeout"`
+	}{
+		JobStatusInfo: job.Status,
+		LockTimeout:   time.Now().Add(-q.opts.LockTimeout),
+	})
+	if err != nil {
+		return errors.Wrapf(err, "problem reading count for lock query for %s", job.Name)
+	}
+
+	if count == 0 {
+		return errors.Errorf("do not have lock for job='%s' num=%d", job.Name, count)
+	}
+
+	if _, err = tx.ExecContext(ctx, "DELETE FROM amboy.job_scopes WHERE id = $1", job.Name); err != nil {
 		return errors.Wrap(err, "problem clearing scopes")
 	}
 
@@ -407,26 +437,25 @@ func (q *queue) doUpdate(ctx context.Context, job *registry.JobInterchange) erro
 			struct {
 				ID    string `db:"id"`
 				Scope string `db:"scope"`
-			}{ID: payload.Name, Scope: s})
+			}{ID: job.Name, Scope: s})
 		if err != nil {
 			return errors.Wrapf(err, "problem inserting scope %s", s)
 		}
 	}
 
-	_, err := tx.NamedExecContext(ctx, updateJob, job)
-	if err != nil {
+	if _, err = tx.NamedExecContext(ctx, updateJob, job); err != nil {
 		return errors.Wrap(err, "problem updating core job data")
 	}
-	_, err := tx.NamedExecContext(ctx, updateJobBody, job)
-	if err != nil {
+
+	if _, err = tx.NamedExecContext(ctx, updateJobBody, job); err != nil {
 		return errors.Wrap(err, "problem updating job body payload")
 	}
-	_, err := tx.NamedExecContext(ctx, updateJobStatus, job.Status)
-	if err != nil {
+
+	if _, err = tx.NamedExecContext(ctx, updateJobStatus, job.Status); err != nil {
 		return errors.Wrap(err, "problem updating job status")
 	}
-	_, err := tx.NamedExecContext(ctx, updateJobTimeInfo, job.TimeInfo)
-	if err != nil {
+
+	if _, err = tx.NamedExecContext(ctx, updateJobTimeInfo, job.TimeInfo); err != nil {
 		return errors.Wrap(err, "problem updating job timing info")
 	}
 
@@ -443,7 +472,7 @@ func (q *queue) doUpdate(ctx context.Context, job *registry.JobInterchange) erro
 				struct {
 					ID    string `db:"id"`
 					Error string `db:"error"`
-				}{ID: payload.Name, Error: e})
+				}{ID: job.Name, Error: e})
 			if err != nil {
 				return errors.Wrap(err, "problem inserting error")
 			}
@@ -457,7 +486,7 @@ func (q *queue) doUpdate(ctx context.Context, job *registry.JobInterchange) erro
 	return nil
 }
 
-func (q *queue) Jobs(ctx context.Context) <-chan amboy.Job {
+func (q *sqlQueue) Jobs(ctx context.Context) <-chan amboy.Job {
 	output := make(chan amboy.Job)
 	go func() {
 		defer close(output)
@@ -468,8 +497,8 @@ func (q *queue) Jobs(ctx context.Context) <-chan amboy.Job {
 			grip.Error(message.WrapError(err, message.Fields{
 				"queue":    q.id,
 				"service":  "amboy.queue.pg",
-				"is_group": d.opts.UseGroups,
-				"group":    d.opts.GroupName,
+				"is_group": q.opts.UseGroups,
+				"group":    q.opts.GroupName,
 				"message":  "problem finding job ids for iterator",
 				"op":       "jobs iterator",
 			}))
@@ -484,8 +513,8 @@ func (q *queue) Jobs(ctx context.Context) <-chan amboy.Job {
 				grip.Debug(message.WrapError(err, message.Fields{
 					"queue":    q.id,
 					"service":  "amboy.queue.pg",
-					"is_group": d.opts.UseGroups,
-					"group":    d.opts.GroupName,
+					"is_group": q.opts.UseGroups,
+					"group":    q.opts.GroupName,
 					"message":  "problem reading job result from row",
 					"op":       "jobs iterator",
 				}))
@@ -493,13 +522,13 @@ func (q *queue) Jobs(ctx context.Context) <-chan amboy.Job {
 				continue
 			}
 
-			job, ok := q.Get(id)
+			job, ok := q.Get(ctx, id)
 			if !ok {
 				grip.Debug(message.Fields{
 					"queue":    q.id,
 					"service":  "amboy.queue.pg",
-					"is_group": d.opts.UseGroups,
-					"group":    d.opts.GroupName,
+					"is_group": q.opts.UseGroups,
+					"group":    q.opts.GroupName,
 					"message":  "problem resolving job",
 					"op":       "jobs iterator",
 				})
@@ -511,8 +540,8 @@ func (q *queue) Jobs(ctx context.Context) <-chan amboy.Job {
 		grip.Debug(message.WrapError(rows.Close(), message.Fields{
 			"queue":    q.id,
 			"service":  "amboy.queue.pg",
-			"is_group": d.opts.UseGroups,
-			"group":    d.opts.GroupName,
+			"is_group": q.opts.UseGroups,
+			"group":    q.opts.GroupName,
 			"op":       "jobs iterator",
 			"message":  "problem closing cursor",
 		}))
@@ -520,7 +549,7 @@ func (q *queue) Jobs(ctx context.Context) <-chan amboy.Job {
 	return output
 }
 
-func (q *queue) getNextQuery() string {
+func (q *sqlQueue) getNextQuery() string {
 	var query string
 	if !q.opts.CheckWaitUntil && !q.opts.CheckDispatchBy {
 		query = getNextJobsBasic
@@ -544,7 +573,7 @@ func (q *queue) getNextQuery() string {
 	return query
 }
 
-func (q *queue) Next(ctx context.Context) amboy.Job {
+func (q *sqlQueue) Next(ctx context.Context) amboy.Job {
 	var (
 		misses         int64
 		dispatchSkips  int64
@@ -555,7 +584,7 @@ func (q *queue) Next(ctx context.Context) amboy.Job {
 
 	startAt := time.Now()
 	defer func() {
-		grip.WarningWhen(time.Since(startAt) > time.Second,
+		grip.DebugWhen(time.Since(startAt) > time.Second,
 			message.Fields{
 				"duration_secs": time.Since(startAt).Seconds(),
 				"service":       "amboy.queue.pgq",
@@ -565,9 +594,9 @@ func (q *queue) Next(ctx context.Context) amboy.Job {
 				"misses":        misses,
 				"dispatched":    job != nil,
 				"message":       "slow job dispatching operation",
-				"id":            d.id,
-				"is_group":      d.opts.UseGroups,
-				"group":         d.opts.GroupName,
+				"id":            q.id,
+				"is_group":      q.opts.UseGroups,
+				"group":         q.opts.GroupName,
 			})
 	}()
 
@@ -581,19 +610,18 @@ func (q *queue) Next(ctx context.Context) amboy.Job {
 			return nil
 		case <-timer.C:
 			misses++
-			rows, err := q.db.QueryContext(ctx, query,
-				struct {
-					GroupName   string    `db:"group_name"`
-					LockExpires time.Time `db:"lock_expires"`
-					Now         time.Time `db:"now"`
-					ZeroTime    time.Time `db:"zero_time"`
-				}{
-					GroupName:   q.opts.GroupName,
-					Now:         time.Now(),
-					LockExpires: time.Now().Add(-q.opts.LockTimeout),
-				})
+			rows, err := q.db.NamedQueryContext(ctx, query, struct {
+				GroupName   string    `db:"group_name"`
+				LockExpires time.Time `db:"lock_expires"`
+				Now         time.Time `db:"now"`
+				ZeroTime    time.Time `db:"zero_time"`
+			}{
+				GroupName:   q.opts.GroupName,
+				Now:         time.Now(),
+				LockExpires: time.Now().Add(-q.opts.LockTimeout),
+			})
 			if err != nil {
-				grip.Debug(message.WrapError(err, message.Fields{
+				grip.Error(message.WrapError(err, message.Fields{
 					"id":            q.id,
 					"service":       "amboy.queue.pgq",
 					"operation":     "retrieving next job",
@@ -605,7 +633,6 @@ func (q *queue) Next(ctx context.Context) amboy.Job {
 				return nil
 			}
 			defer rows.Close()
-
 		CURSOR:
 			for rows.Next() {
 				if ctx.Err() != nil {
@@ -625,7 +652,7 @@ func (q *queue) Next(ctx context.Context) amboy.Job {
 					continue CURSOR
 				}
 
-				job, ok = q.Get(id)
+				job, ok = q.Get(ctx, id)
 				if !ok {
 					continue CURSOR
 				}
@@ -655,27 +682,24 @@ func (q *queue) Next(ctx context.Context) amboy.Job {
 					continue CURSOR
 				}
 
-				if err = d.dispatcher.Dispatch(ctx, job); err != nil {
-					dispatchMisses++
+				if err = q.dispatcher.Dispatch(ctx, job); err != nil {
 					grip.DebugWhen(amboy.IsDispatchable(job.Status(), q.opts.LockTimeout),
 						message.WrapError(err, message.Fields{
-							"id":            d.id,
+							"id":            q.id,
 							"service":       "amboy.queue.pgq",
 							"operation":     "dispatch job",
 							"job_id":        job.ID(),
 							"job_type":      job.Type().Name,
 							"scopes":        job.Scopes(),
 							"stat":          job.Status(),
-							"is_group":      d.opts.UseGroups,
-							"group":         d.opts.GroupName,
+							"is_group":      q.opts.UseGroups,
+							"group":         q.opts.GroupName,
 							"duration_secs": time.Since(startAt).Seconds(),
 						}),
 					)
-
 					job = nil
 					continue CURSOR
 				}
-
 				return job
 			}
 		}
@@ -684,12 +708,17 @@ func (q *queue) Next(ctx context.Context) amboy.Job {
 	return nil
 }
 
-func (q *queue) scopesInUse(ctx, scopes []string) bool {
+func (q *sqlQueue) scopesInUse(ctx context.Context, scopes []string) bool {
 	if len(scopes) > 0 {
 		return false
 	}
 
-	query, args, err := sqlx.In("SELECT COUNT(*) FROM amboy.job_scopes WHERE scope IN (?);", scopes...)
+	scopeArgs := make([]interface{}, len(scopes))
+	for idx := range scopes {
+		scopeArgs[idx] = scopes[idx]
+	}
+
+	query, args, err := sqlx.In("SELECT COUNT(*) FROM amboy.job_scopes WHERE scope IN (?);", scopeArgs...)
 	if err != nil {
 		return false
 	}
@@ -706,43 +735,42 @@ func (q *queue) scopesInUse(ctx, scopes []string) bool {
 	return false
 }
 
-func (q *queue) Stats(ctx context.Context) amboy.QueueStats {
+func (q *sqlQueue) Stats(ctx context.Context) amboy.QueueStats {
 	stats := amboy.QueueStats{}
 
 	grip.Warning(message.WrapError(
-		q.db.GetContext(ctx, &stats.Total, countTotalJobs, d.opts.GroupName),
+		q.db.GetContext(ctx, &stats.Total, countTotalJobs, q.opts.GroupName),
 		message.Fields{
 			"queue":    q.id,
 			"service":  "amboy.queue.pg",
-			"is_group": d.opts.UseGroups,
-			"group":    d.opts.GroupName,
+			"is_group": q.opts.UseGroups,
+			"group":    q.opts.GroupName,
 			"message":  "problem getting total jobs",
 		}))
 	grip.Warning(message.WrapError(
-		q.db.GetContext(ctx, &stats.Pending, countPendingJobs, d.opts.GroupName),
+		q.db.GetContext(ctx, &stats.Pending, countPendingJobs, q.opts.GroupName),
 		message.Fields{
 			"queue":    q.id,
 			"service":  "amboy.queue.pg",
-			"is_group": d.opts.UseGroups,
-			"group":    d.opts.GroupName,
+			"is_group": q.opts.UseGroups,
+			"group":    q.opts.GroupName,
 			"message":  "problem getting pending jobs",
 		}))
 	grip.Warning(message.WrapError(
-		q.db.GetContext(ctx, &stats.Running, countInProgJobs, d.opts.GroupName),
+		q.db.GetContext(ctx, &stats.Running, countInProgJobs, q.opts.GroupName),
 		message.Fields{
 			"queue":    q.id,
 			"service":  "amboy.queue.pg",
-			"is_group": d.opts.UseGroups,
-			"group":    d.opts.GroupName,
+			"is_group": q.opts.UseGroups,
+			"group":    q.opts.GroupName,
 			"message":  "problem getting running jobs",
 		}))
 
 	stats.Completed = stats.Total - stats.Pending
-
 	return stats
 }
 
-func (q *queue) Info() amboy.QueueInfo {
+func (q *sqlQueue) Info() amboy.QueueInfo {
 	q.mutex.RLock()
 	defer q.mutex.RUnlock()
 
@@ -752,14 +780,14 @@ func (q *queue) Info() amboy.QueueInfo {
 	}
 }
 
-func (q *queue) Runner() amboy.Runner {
+func (q *sqlQueue) Runner() amboy.Runner {
 	q.mutex.RLock()
 	defer q.mutex.RUnlock()
 
 	return q.runner
 }
 
-func (q *queue) SetRunner(r amboy.Runner) error {
+func (q *sqlQueue) SetRunner(r amboy.Runner) error {
 	q.mutex.Lock()
 	defer q.mutex.Unlock()
 

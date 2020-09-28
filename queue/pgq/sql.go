@@ -73,6 +73,7 @@ FROM
    amboy.jobs
    INNER JOIN amboy.job_body AS job ON amboy.jobs.id=job.id
    INNER JOIN amboy.job_status AS status ON amboy.jobs.id=status.id
+   INNER JOIN amboy.job_time AS time_info ON amboy.jobs.id=time_info.id
    INNER JOIN amboy.dependency AS dependency ON amboy.jobs.id=dependency.id
 WHERE
    amboy.jobs.id = $1
@@ -83,7 +84,8 @@ SELECT
   error
 FROM
   amboy.job_errors
-WHERE id = $1
+WHERE
+  id = $1
 `
 
 const updateJob = `
@@ -93,14 +95,14 @@ SET
   type = :type,
   queue_group = :queue_group,
   version = :version,
-  priority = :priority,
+  priority = :priority
 WHERE
   id = :id
 `
 
 const updateJobBody = `
 UPDATE
-  amboy.jobs_body
+  amboy.job_body
 SET
   job = :job
 WHERE
@@ -109,7 +111,7 @@ WHERE
 
 const updateJobStatus = `
 UPDATE
-  amboy.jobs_status
+  amboy.job_status
 SET
   owner = :owner,
   completed = :completed,
@@ -123,13 +125,13 @@ WHERE
 
 const updateJobTimeInfo = `
 UPDATE
-  amboy.jobs_time
+  amboy.job_time
 SET
   created = :created,
   started = :started,
   ended = :ended,
   wait_until = :wait_until,
-  dispaych_by = :dispatch_by,
+  dispatch_by = :dispatch_by,
   max_time = :max_time
 WHERE
   id = :id
@@ -144,14 +146,10 @@ FROM
 WHERE
    amboy.jobs.id = :id
    AND (
-     (
-       status.owner = :owner
-       AND status.mod_count = :mod_count
-       AND status.mod_ts > :mod_ts
-     )
-     OR
-	status.mod_ts <= :mod_ts
-   )`
+    (status.owner = :owner
+     AND status.mod_count = :mod_count - 1
+     AND status.mod_ts > :lock_timeout)
+    OR status.mod_ts <= :lock_timeout)`
 
 const countTotalJobs = `
 SELECT
@@ -159,7 +157,7 @@ SELECT
 FROM
    amboy.jobs
 WHERE
-   group = $1
+   amboy.jobs.queue_group = $1
 `
 
 const countPendingJobs = `
@@ -167,10 +165,10 @@ SELECT
    COUNT(*)
 FROM
    amboy.jobs
-   INNER JOIN INNER JOIN amboy.job_status AS status ON amboy.jobs.id=status.id
+   INNER JOIN amboy.job_status AS status ON amboy.jobs.id=status.id
 WHERE
-   group = $1
-   status.completed = false
+   queue_group = $1
+   AND status.completed = false
 `
 
 const countInProgJobs = `
@@ -178,41 +176,43 @@ SELECT
    COUNT(*)
 FROM
    amboy.jobs
-   INNER JOIN INNER JOIN amboy.job_status AS status ON amboy.jobs.id=status.id
+   INNER JOIN amboy.job_status AS status ON amboy.jobs.id=status.id
 WHERE
-   group = $1
-   status.completed = false
-   status.in_progress = true
+   queue_group = $1
+   AND status.completed = false
+   AND status.in_progress = true
 `
 
 const getAllJobIDs = `
 SELECT
    id
 FROM
-   amboy.job_stats
+   amboy.job_status AS status
 ORDER BY
    status.mod_ts DESC
 `
 
 const getNextJobsBasic = `
 SELECT
-   id
+   amboy.jobs.id
 FROM
    amboy.jobs
-   INNER JOIN INNER JOIN amboy.job_status AS status ON amboy.jobs.id=status.id
+   INNER JOIN amboy.job_status AS status ON amboy.jobs.id=status.id
 WHERE
-  ((status.completed = false AND status.in_progress = false) OR (status.completed = false AND status.in_progress = true AND status.mod_ts <= :lock_expires))
+  status.completed = false
   AND queue_group = :group_name
+  AND ((status.in_progress = false) OR (status.in_progress = true AND status.mod_ts <= :lock_expires))
 `
 
 const getNextJobsTimingTemplate = `
 SELECT
-   id
+   amboy.jobs.id
 FROM
    amboy.jobs
-   INNER JOIN INNER JOIN amboy.job_status AS status ON amboy.jobs.id=status.id
-   INNER JOIN INNER JOIN amboy.job_time AS time_info ON amboy.jobs.id=time_info.id
+   INNER JOIN amboy.job_status AS status ON amboy.jobs.id=status.id
+   INNER JOIN amboy.job_time AS time_info ON amboy.jobs.id=time_info.id
 WHERE
-  ((status.completed = false AND status.in_progress = false) OR (status.completed = false AND status.in_progress = true AND status.mod_ts <= :lock_expires))
+  status.completed = false
   AND queue_group = :group_name
+  AND ((status.in_progress = false) OR (status.in_progress = true AND status.mod_ts <= :lock_expires))
 `
