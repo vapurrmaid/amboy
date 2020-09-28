@@ -429,7 +429,7 @@ func ManyQueueTest(bctx context.Context, t *testing.T, test QueueTestCase, runne
 	for i := 0; i < sz; i++ {
 		q, closer, err := test.Constructor(ctx, driverID, size.Size)
 		require.NoError(t, err)
-		defer func() { require.NoError(t, closer(ctx)) }()
+		defer func() { cancel(); require.NoError(t, closer(ctx)) }()
 
 		require.NoError(t, q.Start(ctx))
 		queues = append(queues, q)

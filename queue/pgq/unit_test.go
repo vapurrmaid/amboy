@@ -9,6 +9,7 @@ import (
 	"github.com/deciduosity/amboy/job"
 	"github.com/deciduosity/amboy/queue/testutil"
 	"github.com/deciduosity/grip"
+	"github.com/deciduosity/grip/message"
 	"github.com/google/uuid"
 	"github.com/jmoiron/sqlx"
 	"github.com/lib/pq"
@@ -49,13 +50,14 @@ func MakeTestDatabase(bctx context.Context, name string) (*sqlx.DB, func() error
 
 		_, err = tdb.Exec("DROP DATABASE " + dbName)
 		if perr, ok := err.(*pq.Error); ok && perr.Code == "3D000" {
-			grip.Info(errors.Wrap(err, "error dropping database"))
+			grip.Debug(errors.Wrap(err, "error dropping database"))
 		} else {
 			catcher.Wrap(err, "error dropping database")
 		}
 
 		catcher.Wrap(tdb.Close(), "problem closing connection")
-		return catcher.Resolve()
+		grip.Critical(message.WrapError(catcher.Resolve(), "problem cleaning up test database"))
+		return nil
 	}
 
 	return db, closer, nil
