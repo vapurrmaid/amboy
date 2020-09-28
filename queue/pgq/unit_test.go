@@ -32,6 +32,8 @@ func MakeTestDatabase(bctx context.Context, name string) (*sqlx.DB, func() error
 	if err != nil {
 		return nil, nil, err
 	}
+	tdb.SetMaxOpenConns(128)
+	tdb.SetMaxIdleConns(8)
 
 	_, _ = tdb.Exec("CREATE DATABASE " + dbName)
 
@@ -39,6 +41,9 @@ func MakeTestDatabase(bctx context.Context, name string) (*sqlx.DB, func() error
 	if err != nil {
 		return nil, nil, err
 	}
+
+	db.SetMaxOpenConns(128)
+	db.SetMaxIdleConns(8)
 
 	closer := func() error {
 		cancel()
@@ -108,8 +113,7 @@ func TestQueueSmoke(t *testing.T) {
 			SingleWorker:   false,
 			IsRemote:       true,
 			MultiSupported: true,
-			MinSize:        4,
-			MaxSize:        8,
+			MaxSize:        32,
 		},
 		{
 			Name: "PostgreSQL/Timing",
@@ -134,8 +138,7 @@ func TestQueueSmoke(t *testing.T) {
 			IsRemote:                true,
 			WaitUntilSupported:      true,
 			DispatchBeforeSupported: true,
-			MinSize:                 4,
-			MaxSize:                 8,
+			MaxSize:                 32,
 		},
 		{
 			Name: "PostgreSQL/Group",
@@ -157,12 +160,10 @@ func TestQueueSmoke(t *testing.T) {
 
 				return q, func(ctx context.Context) error { q.Runner().Close(ctx); return closer() }, nil
 			},
-			Skip:                    true,
-			IsRemote:                true,
-			SingleWorker:            false,
-			MultiSupported:          true,
-			WaitUntilSupported:      true,
-			DispatchBeforeSupported: true,
+			IsRemote:       true,
+			SingleWorker:   false,
+			MultiSupported: true,
+			MaxSize:        32,
 		},
 	} {
 		testutil.RunSmokeTest(bctx, t, test)

@@ -549,7 +549,7 @@ func (d *mongoDriver) Jobs(ctx context.Context) <-chan amboy.Job {
 	output := make(chan amboy.Job)
 	go func() {
 		defer close(output)
-		defer recovery.LogStackTraceAndContinue("jobs iterator", "amboy.queue.mdbq", q.ID())
+		defer recovery.LogStackTraceAndContinue("jobs iterator", "amboy.queue.mdbq", d.instanceID)
 		q := bson.M{}
 		d.modifyQueryForGroup(q)
 

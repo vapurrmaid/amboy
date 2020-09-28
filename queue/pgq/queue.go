@@ -251,7 +251,6 @@ func (q *sqlQueue) getJobTx(ctx context.Context, tx *sqlx.Tx, id string) (amboy.
 	}{}
 
 	id = q.getIDFromName(id)
-
 	if err := tx.GetContext(ctx, &payload, getJobByID, id); err != nil {
 		return nil, false
 	}
@@ -285,10 +284,10 @@ func (q *sqlQueue) processNameForUsers(j *registry.JobInterchange) {
 	j.TimeInfo.ID = j.Name
 }
 
-func (d *sqlQueue) processJobForGroup(j *registry.JobInterchange) {
-	if d.opts.UseGroups {
-		j.Name = fmt.Sprintf("%s.%s", j.Group, j.Name)
-		j.Group = d.opts.GroupName
+func (q *sqlQueue) processJobForGroup(j *registry.JobInterchange) {
+	if q.opts.UseGroups {
+		j.Name = fmt.Sprintf("%s.%s", q.opts.GroupName, j.Name)
+		j.Group = q.opts.GroupName
 	}
 
 	j.Status.ID = j.Name
@@ -398,6 +397,7 @@ RETRY:
 
 func (q *sqlQueue) doUpdate(ctx context.Context, job *registry.JobInterchange) error {
 	q.processJobForGroup(job)
+	defer func() { q.processNameForUsers(job) }()
 
 	tx, err := q.db.BeginTxx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
@@ -524,6 +524,10 @@ func (q *sqlQueue) Jobs(ctx context.Context) <-chan amboy.Job {
 				continue
 			}
 
+			if q.opts.UseGroups {
+				id = id[len(q.opts.GroupName)+1:]
+			}
+
 			job, ok := q.Get(ctx, id)
 			if !ok {
 				grip.Debug(message.Fields{
@@ -623,7 +627,7 @@ func (q *sqlQueue) Next(ctx context.Context) amboy.Job {
 				LockExpires: time.Now().Add(-q.opts.LockTimeout),
 			})
 			if err != nil {
-				grip.Error(message.WrapError(err, message.Fields{
+				grip.Warning(message.WrapError(err, message.Fields{
 					"id":            q.id,
 					"service":       "amboy.queue.pgq",
 					"operation":     "retrieving next job",
@@ -652,6 +656,10 @@ func (q *sqlQueue) Next(ctx context.Context) amboy.Job {
 					}))
 
 					continue CURSOR
+				}
+
+				if q.opts.UseGroups {
+					id = id[len(q.opts.GroupName)+1:]
 				}
 
 				job, ok = q.Get(ctx, id)
