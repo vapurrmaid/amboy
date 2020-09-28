@@ -2,6 +2,7 @@ package pgq
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"math/rand"
@@ -232,7 +233,7 @@ func (q *sqlQueue) Put(ctx context.Context, j amboy.Job) error {
 }
 
 func (q *sqlQueue) Get(ctx context.Context, id string) (amboy.Job, bool) {
-	tx, err := q.db.BeginTxx(ctx, nil)
+	tx, err := q.db.BeginTxx(ctx, &sql.TxOptions{ReadOnly: true, Isolation: sql.LevelSerializable})
 	if err != nil {
 		return nil, false
 	}
@@ -390,6 +391,7 @@ RETRY:
 				return
 			}
 			return
+
 		}
 	}
 }
@@ -397,7 +399,7 @@ RETRY:
 func (q *sqlQueue) doUpdate(ctx context.Context, job *registry.JobInterchange) error {
 	q.processJobForGroup(job)
 
-	tx, err := q.db.BeginTxx(ctx, nil)
+	tx, err := q.db.BeginTxx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return errors.Wrap(err, "problem starting transaction")
 	}
@@ -709,7 +711,7 @@ func (q *sqlQueue) Next(ctx context.Context) amboy.Job {
 }
 
 func (q *sqlQueue) scopesInUse(ctx context.Context, scopes []string) bool {
-	if len(scopes) > 0 {
+	if len(scopes) == 0 {
 		return false
 	}
 
@@ -718,7 +720,7 @@ func (q *sqlQueue) scopesInUse(ctx context.Context, scopes []string) bool {
 		scopeArgs[idx] = scopes[idx]
 	}
 
-	query, args, err := sqlx.In("SELECT COUNT(*) FROM amboy.job_scopes WHERE scope IN (?);", scopeArgs...)
+	query, args, err := sqlx.In("SELECT COUNT(*) FROM amboy.job_scopes WHERE scope IN (?);", scopeArgs)
 	if err != nil {
 		return false
 	}
