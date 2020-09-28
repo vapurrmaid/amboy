@@ -559,13 +559,13 @@ func (q *sqlQueue) getNextQuery() string {
 		timing := []string{}
 
 		if q.opts.CheckWaitUntil {
-			timing = append(timing, "time.info.wait_until <= :now")
+			timing = append(timing, "  AND time_info.wait_until <= :now")
 		}
 		if q.opts.CheckDispatchBy {
-			timing = append(timing, "(time_info.dispatch_by > :now OR time_info.dispatch_by = :zero_time)")
+			timing = append(timing, "  AND (time_info.dispatch_by > :now OR time_info.dispatch_by = :zero_time)")
 		}
 
-		query = fmt.Sprintln(getNextJobsTimingTemplate, strings.Join(timing, " AND "))
+		query = fmt.Sprintln(getNextJobsTimingTemplate, strings.Join(timing, ""))
 	}
 
 	if q.opts.Priority {
@@ -660,7 +660,7 @@ func (q *sqlQueue) Next(ctx context.Context) amboy.Job {
 				}
 
 				if job.TimeInfo().IsStale() {
-					_, err := q.db.NamedExecContext(ctx, "DELETE FROM amboy.jobs WHERE id = $1", id)
+					_, err := q.db.ExecContext(ctx, "DELETE FROM amboy.jobs WHERE id = $1")
 					grip.Notice(message.WrapError(err, message.Fields{
 						"id":        q.id,
 						"service":   "amboy.queue.pgq",

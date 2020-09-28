@@ -89,7 +89,7 @@ func TestQueueSmoke(t *testing.T) {
 
 	for _, test := range []testutil.QueueTestCase{
 		{
-			Name: "PostgreSQL/Single",
+			Name: "PostgreSQL/Simple",
 			Constructor: func(ctx context.Context, name string, size int) (amboy.Queue, testutil.TestCloser, error) {
 				db, closer, err := MakeTestDatabase(ctx, name)
 				if err != nil {
@@ -108,10 +108,34 @@ func TestQueueSmoke(t *testing.T) {
 			SingleWorker:   false,
 			IsRemote:       true,
 			MultiSupported: true,
-			// WaitUntilSupported:      true,
-			// DispatchBeforeSupported: true,
-			MinSize: 4,
-			MaxSize: 8,
+			MinSize:        4,
+			MaxSize:        8,
+		},
+		{
+			Name: "PostgreSQL/Timing",
+			Constructor: func(ctx context.Context, name string, size int) (amboy.Queue, testutil.TestCloser, error) {
+				db, closer, err := MakeTestDatabase(ctx, name)
+				if err != nil {
+					return nil, nil, err
+				}
+				q, err := NewQueue(db, Options{
+					Name:            name,
+					PoolSize:        size,
+					CheckWaitUntil:  true,
+					CheckDispatchBy: true,
+				})
+				if err != nil {
+					return nil, nil, err
+				}
+
+				return q, func(ctx context.Context) error { q.Runner().Close(ctx); return closer() }, nil
+			},
+			SingleWorker:            false,
+			IsRemote:                true,
+			WaitUntilSupported:      true,
+			DispatchBeforeSupported: true,
+			MinSize:                 4,
+			MaxSize:                 8,
 		},
 		{
 			Name: "PostgreSQL/Group",

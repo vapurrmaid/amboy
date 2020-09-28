@@ -120,8 +120,7 @@ SET
   mod_count = :mod_count,
   err_count = :err_count
 WHERE
-  id = :id
-`
+  id = :id`
 
 const updateJobTimeInfo = `
 UPDATE
@@ -149,7 +148,8 @@ WHERE
     (status.owner = :owner
      AND status.mod_count = :mod_count - 1
      AND status.mod_ts > :lock_timeout)
-    OR status.mod_ts <= :lock_timeout)`
+    OR status.mod_ts <= :lock_timeout)
+`
 
 const countTotalJobs = `
 SELECT
@@ -214,5 +214,4 @@ FROM
 WHERE
   status.completed = false
   AND queue_group = :group_name
-  AND ((status.in_progress = false) OR (status.in_progress = true AND status.mod_ts <= :lock_expires))
-`
+  AND ((status.in_progress = false) OR (status.in_progress = true AND status.mod_ts <= :lock_expires))`
