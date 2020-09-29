@@ -295,7 +295,7 @@ func (q *remoteBase) Start(ctx context.Context) error {
 		return errors.Wrap(err, "problem starting runner in remote queue")
 	}
 
-	if err = q.driver.Open(ctx); err != nil {
+	if err := q.driver.Open(ctx); err != nil {
 		return errors.Wrap(err, "problem starting driver in remote queue")
 	}
 

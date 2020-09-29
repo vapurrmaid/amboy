@@ -376,7 +376,7 @@ func (d *mongoDriver) Close() {
 
 func (d *mongoDriver) getIDFromName(name string) string {
 	if d.opts.UseGroups {
-		return fmt.Sprintf("%s.%s", groupName, jobName)
+		return fmt.Sprintf("%s.%s", d.opts.GroupName, name)
 	}
 
 	return name
@@ -396,7 +396,7 @@ func (d *mongoDriver) processJobForGroup(j *registry.JobInterchange) {
 	}
 
 	j.Group = d.opts.GroupName
-	j.Name = d.getIDFromName(j.name)
+	j.Name = d.getIDFromName(j.Name)
 }
 
 func (d *mongoDriver) modifyQueryForGroup(q bson.M) {
