@@ -641,5 +641,4 @@ func (db *dbQueueManager) CompleteJobsByType(ctx context.Context, f management.S
 
 func (db *dbQueueManager) CompleteJobs(ctx context.Context, f management.StatusFilter) error {
 	return db.completeJobs(ctx, bson.M{}, f)
-
 }

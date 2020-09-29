@@ -22,6 +22,8 @@ type sqlGroup struct {
 	canceler  context.CancelFunc
 }
 
+// GroupOptions controls the behavior of the amboy.QueueGroup
+// implementation.
 type GroupOptions struct {
 	// Abortable controls if the queue will use an abortable pool
 	// imlementation. The DefaultWorkers options sets the default number
