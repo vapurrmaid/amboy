@@ -66,6 +66,17 @@ FOREIGN KEY (id) REFERENCES amboy.jobs(id) ON DELETE CASCADE
 );
 `
 
+const getActiveGroups = `
+SELECT
+   DISTINCT queue_group
+FROM
+   amboy.jobs
+   INNER JOIN amboy.job_status AS status ON amboy.jobs.id=status.id
+WHERE
+   status.completed = false
+   OR (status.completed = true AND status.mod_ts >= $1)
+`
+
 const getJobByID = `
 SELECT
    *
