@@ -15,6 +15,7 @@ import (
 func TestGroup(t *testing.T) {
 	bctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	t.Parallel()
 
 	t.Run("Constructor", func(t *testing.T) {
 		remoteTests := []struct {

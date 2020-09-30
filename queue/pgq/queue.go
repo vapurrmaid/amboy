@@ -413,7 +413,7 @@ func (q *sqlQueue) doUpdate(ctx context.Context, job *registry.JobInterchange) e
 	if err != nil {
 		return errors.Wrapf(err, "problem reading count for lock query for %s", job.Name)
 	}
-	err = stmt.Get(&count, struct {
+	err = stmt.GetContext(ctx, &count, struct {
 		amboy.JobStatusInfo
 		LockTimeout time.Time `db:"lock_timeout"`
 	}{
@@ -428,7 +428,7 @@ func (q *sqlQueue) doUpdate(ctx context.Context, job *registry.JobInterchange) e
 		return errors.Errorf("do not have lock for job='%s' num=%d", job.Name, count)
 	}
 
-	if _, err = tx.ExecContext(ctx, "DELETE FROM amboy.job_scopes WHERE id = $1", job.Name); err != nil {
+	if _, err = tx.ExecContext(ctx, removeJobScopes, job.Name); err != nil {
 		return errors.Wrap(err, "problem clearing scopes")
 	}
 
@@ -723,12 +723,7 @@ func (q *sqlQueue) scopesInUse(ctx context.Context, scopes []string) bool {
 		return false
 	}
 
-	scopeArgs := make([]interface{}, len(scopes))
-	for idx := range scopes {
-		scopeArgs[idx] = scopes[idx]
-	}
-
-	query, args, err := sqlx.In("SELECT COUNT(*) FROM amboy.job_scopes WHERE scope IN (?);", scopeArgs)
+	query, args, err := sqlx.In("SELECT COUNT(*) FROM amboy.job_scopes WHERE scope IN (?);", convertStringsToInterfaces(scopes))
 	if err != nil {
 		return false
 	}
@@ -743,6 +738,14 @@ func (q *sqlQueue) scopesInUse(ctx context.Context, scopes []string) bool {
 	}
 
 	return false
+}
+
+func convertStringsToInterfaces(in []string) []interface{} {
+	out := make([]interface{}, len(in))
+	for idx := range in {
+		out[idx] = in[idx]
+	}
+	return out
 }
 
 func (q *sqlQueue) Stats(ctx context.Context) amboy.QueueStats {

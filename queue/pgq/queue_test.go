@@ -21,6 +21,7 @@ import (
 func GetTestDatabase(bctx context.Context, t *testing.T) (*sqlx.DB, func() error) {
 	db, closer, err := MakeTestDatabase(bctx, uuid.New().String()[0:7])
 	require.NoError(t, err)
+
 	return db, closer
 }
 
@@ -72,7 +73,7 @@ func MakeTestDatabase(bctx context.Context, name string) (*sqlx.DB, func() error
 func TestQueue(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
+	t.Parallel()
 	t.Run("GetPutRoundTrip", func(t *testing.T) {
 		db, close := GetTestDatabase(ctx, t)
 		defer close()
@@ -91,6 +92,7 @@ func TestQueue(t *testing.T) {
 func TestQueueSmoke(t *testing.T) {
 	bctx, bcancel := context.WithCancel(context.Background())
 	defer bcancel()
+	t.Parallel()
 
 	for _, test := range []testutil.QueueTestCase{
 		{
