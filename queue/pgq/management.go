@@ -274,12 +274,12 @@ func (m *sqlManager) doRecentErrors(ctx context.Context, jobType string, window 
 	if m.opts.SingleGroup {
 		clauses = append(clauses, "  AND queue_group = :queue_group")
 		clauses = append(clauses, "GROUP BY type, queue_group")
-		query = strings.Replace(query, "{{queue_group}}", "\n   amboy.jobs.queue_group,", 1)
+		query = strings.Replace(query, "{{queue_group}}", "\n   jobs.queue_group,", 1)
 	} else if m.opts.ByGroups {
 		clauses = append(clauses, "GROUP BY type, queue_group")
-		query = strings.Replace(query, "{{queue_group}}", "\n   amboy.jobs.queue_group,", 1)
+		query = strings.Replace(query, "{{queue_group}}", "\n   jobs.queue_group,", 1)
 	} else {
-		clauses = append(clauses, "GROUP BY amboy.jobs.type")
+		clauses = append(clauses, "GROUP BY jobs.type")
 		query = strings.Replace(query, "{{queue_group}}", "", 1)
 	}
 

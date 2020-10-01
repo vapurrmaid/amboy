@@ -39,7 +39,9 @@ type sqlQueue struct {
 	dispatcher queue.Dispatcher
 }
 
+// Options describe the
 type Options struct {
+	SchemaName      string
 	Name            string
 	GroupName       string
 	UseGroups       bool
@@ -52,6 +54,8 @@ type Options struct {
 	LockTimeout  time.Duration
 }
 
+// Validate ensures that all options are reasonable, and will override
+// and set default options where possible.
 func (opts *Options) Validate() error {
 	if opts.LockTimeout < 0 {
 		return errors.New("cannot have negative lock timeout")
@@ -67,6 +71,9 @@ func (opts *Options) Validate() error {
 	if opts.WaitInterval == 0 {
 		opts.WaitInterval = 100 * time.Millisecond
 
+	}
+	if opts.SchemaName == "" {
+		opts.SchemaName = "amboy"
 	}
 
 	return nil
@@ -95,6 +102,10 @@ func NewQueue(db *sqlx.DB, opts Options) (amboy.Queue, error) {
 	}
 
 	if err := q.SetRunner(pool.NewLocalWorkers(opts.PoolSize, q)); err != nil {
+		return nil, errors.WithStack(err)
+	}
+
+	if _, err := db.Exec(fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s;", opts.SchemaName)); err != nil {
 		return nil, errors.WithStack(err)
 	}
 
@@ -156,7 +167,7 @@ func (q *sqlQueue) Put(ctx context.Context, j amboy.Job) error {
 	defer tx.Rollback()
 
 	_, err = tx.NamedExecContext(ctx, fmt.Sprintln(
-		"INSERT INTO amboy.jobs (id, type, queue_group, version, priority)",
+		"INSERT INTO jobs (id, type, queue_group, version, priority)",
 		"VALUES (:id, :type, :queue_group, :version, :priority)"),
 		payload)
 	if err != nil {
@@ -168,7 +179,7 @@ func (q *sqlQueue) Put(ctx context.Context, j amboy.Job) error {
 	}
 
 	_, err = tx.NamedExecContext(ctx, fmt.Sprintln(
-		"INSERT INTO amboy.job_body (id, job)",
+		"INSERT INTO job_body (id, job)",
 		"VALUES (:id, :job)"),
 		payload)
 	if err != nil {
@@ -176,7 +187,7 @@ func (q *sqlQueue) Put(ctx context.Context, j amboy.Job) error {
 	}
 
 	_, err = tx.NamedExecContext(ctx, fmt.Sprintln(
-		"INSERT INTO amboy.job_status (id, owner, completed, in_progress, mod_ts, mod_count, err_count)",
+		"INSERT INTO job_status (id, owner, completed, in_progress, mod_ts, mod_count, err_count)",
 		"VALUES (:id, :owner, :completed, :in_progress, :mod_ts, :mod_count, :err_count)"),
 		payload.Status)
 	if err != nil {
@@ -185,7 +196,7 @@ func (q *sqlQueue) Put(ctx context.Context, j amboy.Job) error {
 
 	for _, e := range payload.Status.Errors {
 		_, err := tx.NamedExecContext(ctx, fmt.Sprintln(
-			"INSERT INTO amboy.job_errors (id, edge)",
+			"INSERT INTO job_errors (id, edge)",
 			"VALUES (:id, :edge)"),
 			struct {
 				ID    string `db:"id"`
@@ -197,7 +208,7 @@ func (q *sqlQueue) Put(ctx context.Context, j amboy.Job) error {
 	}
 
 	_, err = tx.NamedExecContext(ctx, fmt.Sprintln(
-		"INSERT INTO amboy.job_time (id, created, started, ended, wait_until, dispatch_by, max_time)",
+		"INSERT INTO job_time (id, created, started, ended, wait_until, dispatch_by, max_time)",
 		"VALUES (:id, :created, :started, :ended, :wait_until, :dispatch_by, :max_time)"),
 		payload.TimeInfo)
 	if err != nil {
@@ -205,7 +216,7 @@ func (q *sqlQueue) Put(ctx context.Context, j amboy.Job) error {
 	}
 
 	_, err = tx.NamedExecContext(ctx, fmt.Sprintln(
-		"INSERT INTO amboy.dependency (id, dep_type, dep_version, dependency)",
+		"INSERT INTO dependency (id, dep_type, dep_version, dependency)",
 		"VALUES (:id, :dep_type, :dep_version, :dependency)"),
 		payload.Dependency)
 	if err != nil {
@@ -214,7 +225,7 @@ func (q *sqlQueue) Put(ctx context.Context, j amboy.Job) error {
 
 	for _, edge := range payload.Dependency.Edges {
 		_, err := tx.NamedExecContext(ctx, fmt.Sprintln(
-			"INSERT INTO amboy.dependency_edges (id, edge)",
+			"INSERT INTO dependency_edges (id, edge)",
 			"VALUES (:id, :edge)"),
 			struct {
 				ID   string `db:"id"`
@@ -434,7 +445,7 @@ func (q *sqlQueue) doUpdate(ctx context.Context, job *registry.JobInterchange) e
 
 	for _, s := range job.Scopes {
 		_, err := tx.NamedExecContext(ctx, fmt.Sprintln(
-			"INSERT INTO amboy.job_scopes (id, scope)",
+			"INSERT INTO job_scopes (id, scope)",
 			"VALUES (:id, :scope)"),
 			struct {
 				ID    string `db:"id"`
@@ -462,14 +473,14 @@ func (q *sqlQueue) doUpdate(ctx context.Context, job *registry.JobInterchange) e
 	}
 
 	count = 0
-	if err = tx.GetContext(ctx, &count, "SELECT COUNT(*) FROM amboy.job_errors WHERE id = $1", job.Name); err != nil {
+	if err = tx.GetContext(ctx, &count, "SELECT COUNT(*) FROM job_errors WHERE id = $1", job.Name); err != nil {
 		return errors.Wrap(err, "problem counting errors")
 	}
 
 	if len(job.Status.Errors) > count {
 		for _, e := range job.Status.Errors[count-1:] {
 			_, err := tx.NamedExecContext(ctx, fmt.Sprintln(
-				"INSERT INTO amboy.job_errors (id, edge)",
+				"INSERT INTO job_errors (id, edge)",
 				"VALUES (:id, :edge)"),
 				struct {
 					ID    string `db:"id"`
@@ -668,7 +679,7 @@ func (q *sqlQueue) Next(ctx context.Context) amboy.Job {
 				}
 
 				if job.TimeInfo().IsStale() {
-					_, err := q.db.ExecContext(ctx, "DELETE FROM amboy.jobs WHERE id = $1")
+					_, err := q.db.ExecContext(ctx, "DELETE FROM jobs WHERE id = $1")
 					grip.Notice(message.WrapError(err, message.Fields{
 						"id":        q.id,
 						"service":   "amboy.queue.pgq",
@@ -723,7 +734,7 @@ func (q *sqlQueue) scopesInUse(ctx context.Context, scopes []string) bool {
 		return false
 	}
 
-	query, args, err := sqlx.In("SELECT COUNT(*) FROM amboy.job_scopes WHERE scope IN (?);", convertStringsToInterfaces(scopes))
+	query, args, err := sqlx.In("SELECT COUNT(*) FROM job_scopes WHERE scope IN (?);", convertStringsToInterfaces(scopes))
 	if err != nil {
 		return false
 	}
