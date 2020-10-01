@@ -50,10 +50,11 @@ func (m *sqlManager) JobStatus(ctx context.Context, filter management.StatusFilt
 	query := groupJobStatusTemplate
 	if m.opts.SingleGroup {
 		where = append(where, "queue_group = :queue_group")
-		query = strings.Replace(query, "{{project_group}}", ", queue_group", 1)
-	} else if m.opts.ByGroups {
 		group = "type, queue_group"
-		query = strings.Replace(query, "{{project_group}}", ", queue_group", 1)
+		query = strings.Replace(query, "{{project_group}}", ",\n   queue_group", 1)
+	} else if m.opts.ByGroups {
+		query = strings.Replace(query, "{{project_group}}", ",\n   queue_group", 1)
+		group = "type, queue_group"
 	} else {
 		query = strings.Replace(query, "{{project_group}}", "", 1)
 	}
@@ -85,7 +86,7 @@ func (m *sqlManager) JobStatus(ctx context.Context, filter management.StatusFilt
 	if len(where) > 0 {
 		query = fmt.Sprintln(query, "\nWHERE", "\n  ", strings.Join(where, "\n   AND "))
 	}
-	query = fmt.Sprintln(query, "\nGROUP BY", group)
+	query = fmt.Sprintln(query, "GROUP BY", group)
 
 	stmt, err := m.db.PrepareNamedContext(ctx, query)
 	if err != nil {
@@ -185,10 +186,10 @@ func (m *sqlManager) RecentTiming(ctx context.Context, window time.Duration, fil
 	if m.opts.SingleGroup {
 		where = append(where, "queue_group = :queue_group")
 		group = "type, queue_group"
-		query = strings.Replace(query, "{{project_group}}", ", queue_group,", 1)
+		query = strings.Replace(query, "{{project_group}}", "queue_group,", 1)
 	} else if m.opts.ByGroups {
 		group = "type, queue_group"
-		query = strings.Replace(query, "{{project_group}}", ", queue_group,", 1)
+		query = strings.Replace(query, "{{project_group}}", "queue_group,", 1)
 	} else {
 		group = "type"
 		query = strings.Replace(query, "{{project_group}}", "", 1)
@@ -218,10 +219,11 @@ func (m *sqlManager) RecentTiming(ctx context.Context, window time.Duration, fil
 	}
 
 	query = fmt.Sprintln(query, " ", strings.Join(where, "\n   AND "),
-		"GROUP BY", group)
+		"\nGROUP BY", group)
 
 	stmt, err := m.db.PrepareNamedContext(ctx, query)
 	if err != nil {
+		fmt.Println(query)
 		return nil, errors.Wrap(err, "problem preparing query")
 	}
 
@@ -270,7 +272,8 @@ func (m *sqlManager) doRecentErrors(ctx context.Context, jobType string, window 
 	}
 	query := recentJobErrorsTemplate
 	if m.opts.SingleGroup {
-		clauses = append(clauses, "   AND queue_group = :queue_group")
+		clauses = append(clauses, "  AND queue_group = :queue_group")
+		clauses = append(clauses, "GROUP BY type, queue_group")
 		query = strings.Replace(query, "{{queue_group}}", "\n   amboy.jobs.queue_group,", 1)
 	} else if m.opts.ByGroups {
 		clauses = append(clauses, "GROUP BY type, queue_group")

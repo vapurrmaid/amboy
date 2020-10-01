@@ -266,7 +266,7 @@ WHERE
 const groupJobStatusTemplate = `
 SELECT
    COUNT(amboy.jobs.id) AS count,
-   type {{project_group}}
+   type{{project_group}}
 FROM
    amboy.jobs
    INNER JOIN amboy.job_status AS status ON amboy.jobs.id=status.id`
