@@ -82,6 +82,10 @@ func NewGroup(ctx context.Context, db *sqlx.DB, opts Options, gopts GroupOptions
 		return nil, errors.Wrap(err, "invalid queue group options")
 	}
 
+	if err := opts.Validate(); err != nil {
+		return nil, errors.Wrap(err, "invalid queue options")
+	}
+
 	if _, err := db.Exec(fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s;", opts.SchemaName)); err != nil {
 		return nil, errors.WithStack(err)
 	}
