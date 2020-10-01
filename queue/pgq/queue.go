@@ -68,10 +68,11 @@ func (opts *Options) Validate() error {
 	if opts.PoolSize == 0 {
 		opts.PoolSize = runtime.NumCPU()
 	}
+
 	if opts.WaitInterval == 0 {
 		opts.WaitInterval = 100 * time.Millisecond
-
 	}
+
 	if opts.SchemaName == "" {
 		opts.SchemaName = "amboy"
 	}
