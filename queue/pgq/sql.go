@@ -62,6 +62,18 @@ id text NOT NULL NOT NULL,
 edge text NOT NULL,
 FOREIGN KEY (id) REFERENCES jobs(id) ON DELETE CASCADE
 );
+
+CREATE INDEX IF NOT EXISTS group_type ON jobs (queue_group, type);
+CREATE INDEX IF NOT EXISTS priority ON jobs (queue_group, priority);
+CREATE INDEX IF NOT EXISTS status_progress ON job_status (completed, in_progress);
+CREATE INDEX IF NOT EXISTS status_prgress_modtime ON job_status (completed, in_progress, mod_ts);
+CREATE INDEX IF NOT EXISTS endtime ON job_time (ended);
+CREATE INDEX IF NOT EXISTS create_time ON job_time (created);
+CREATE INDEX IF NOT EXISTS timing_wait ON job_time (wait_until);
+CREATE INDEX IF NOT EXISTS timing_expire ON job_time (dispatch_by);
+CREATE INDEX IF NOT EXISTS timing_combined_one ON job_time (wait_until, dispatch_by);
+CREATE INDEX IF NOT EXISTS timing_combined_two ON job_time (dispatch_by, wait_until);
+CREATE UNIQUE INDEX IF NOT EXISTS scopes ON job_scopes (scope);
 `
 
 const getActiveGroups = `
