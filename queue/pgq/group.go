@@ -3,6 +3,7 @@ package pgq
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"time"
 
 	"github.com/deciduosity/amboy"
@@ -79,6 +80,10 @@ func (opts *GroupOptions) validate() error {
 func NewGroup(ctx context.Context, db *sqlx.DB, opts Options, gopts GroupOptions) (amboy.QueueGroup, error) {
 	if err := gopts.validate(); err != nil {
 		return nil, errors.Wrap(err, "invalid queue group options")
+	}
+
+	if _, err := db.Exec(fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s;", opts.SchemaName)); err != nil {
+		return nil, errors.WithStack(err)
 	}
 
 	if _, err := db.Exec(bootstrapDB); err != nil {
