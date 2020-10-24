@@ -325,7 +325,7 @@ func (q *sqlQueue) getJobTx(ctx context.Context, tx *sqlx.Tx, id string) (amboy.
 		return nil, false
 	}
 
-	if err := tx.SelectContext(ctx, &payload.Status.Errors, getErrorsForJob, id); err != nil {
+	if err := tx.SelectContext(ctx, &payload.JobStatusInfo.Errors, getErrorsForJob, id); err != nil {
 		return nil, false
 	}
 
@@ -334,7 +334,7 @@ func (q *sqlQueue) getJobTx(ctx context.Context, tx *sqlx.Tx, id string) (amboy.
 	}
 
 	payload.JobInterchange.Name = id
-	payload.JobInterchange.Status = payload.Status
+	payload.JobInterchange.Status = payload.JobStatusInfo
 	payload.JobInterchange.Dependency = &payload.DependencyInterchange
 	payload.JobInterchange.TimeInfo = payload.JobTimeInfo
 
