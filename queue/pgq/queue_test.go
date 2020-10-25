@@ -46,6 +46,7 @@ func MakeTestDatabase(bctx context.Context, name string) (*sqlx.DB, func() error
 
 	db, err := sqlx.ConnectContext(ctx, "postgres", fmt.Sprintf("user=amboy database=%s sslmode=disable", dbName))
 	if err != nil {
+		cancel()
 		return nil, nil, err
 	}
 
