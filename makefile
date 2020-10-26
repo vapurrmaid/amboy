@@ -131,7 +131,7 @@ $(buildDir)/:
 	@mkdir -p $@
 $(buildDir)/output.%.test:.FORCE
 	@mkdir -p $(buildDir)/
-	$(goEnv) $(gobin) test $(testArgs) $(if $(findstring mdbq,$@),-p 1,) ./$(if $(subst $(name),,$*),$(subst -,/,$*),) | tee $@
+	$(goEnv) $(gobin) test $(testArgs) $(if $(findstring mdbq,$@),-test.parallel=1,) ./$(if $(subst $(name),,$*),$(subst -,/,$*),) | tee $@
 	@!( grep -s -q "^FAIL" $@ && grep -s -q "^WARNING: DATA RACE" $@)
 	@(grep -s -q "^PASS" $@ || grep -s -q "no test files" $@)
 $(buildDir)/output.%.coverage:.FORCE

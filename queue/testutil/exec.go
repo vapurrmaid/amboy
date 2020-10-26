@@ -29,7 +29,9 @@ func RunSmokeTest(bctx context.Context, t *testing.T, test QueueTestCase) {
 			}
 
 			t.Run(runner.Name+"Pool", func(t *testing.T) {
-				t.Parallel()
+				if !test.DisableParallelTests {
+					t.Parallel()
+				}
 				runner := runner
 				for _, size := range DefaultSizeTestCases() {
 					if test.MaxSize > 0 && size.Size > test.MaxSize {
@@ -50,7 +52,9 @@ func RunSmokeTest(bctx context.Context, t *testing.T, test QueueTestCase) {
 
 					t.Run(size.Name, func(t *testing.T) {
 						size := size
-						t.Parallel()
+						if !test.DisableParallelTests {
+							t.Parallel()
+						}
 						if !test.SkipUnordered {
 							t.Run("Unordered", func(t *testing.T) {
 								UnorderedTest(bctx, t, test, runner, size)

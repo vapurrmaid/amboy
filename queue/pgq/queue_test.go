@@ -100,9 +100,9 @@ func TestQueue(t *testing.T) {
 }
 
 func TestQueueSmoke(t *testing.T) {
+	t.Parallel()
 	bctx, bcancel := context.WithCancel(context.Background())
 	defer bcancel()
-	t.Parallel()
 
 	for _, test := range []testutil.QueueTestCase{
 		{
