@@ -63,6 +63,7 @@ edge text NOT NULL,
 FOREIGN KEY (id) REFERENCES jobs(id) ON DELETE CASCADE
 );
 
+CREATE INDEX IF NOT EXISTS jobs_queue_group ON {schemaName}.jobs (queue_group);
 CREATE INDEX IF NOT EXISTS jobs_group_type ON {schemaName}.jobs (queue_group, type);
 CREATE INDEX IF NOT EXISTS jobs_priority ON {schemaName}.jobs (queue_group, priority);
 CREATE INDEX IF NOT EXISTS job_status_completed_in_progress ON {schemaName}.job_status (completed, in_progress);
