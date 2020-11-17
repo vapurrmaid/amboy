@@ -63,17 +63,17 @@ edge text NOT NULL,
 FOREIGN KEY (id) REFERENCES jobs(id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS group_type ON {schemaName}.jobs (queue_group, type);
-CREATE INDEX IF NOT EXISTS priority ON {schemaName}.jobs (queue_group, priority);
-CREATE INDEX IF NOT EXISTS status_progress ON {schemaName}.job_status (completed, in_progress);
-CREATE INDEX IF NOT EXISTS status_prgress_modtime ON {schemaName}.job_status (completed, in_progress, mod_ts);
-CREATE INDEX IF NOT EXISTS endtime ON {schemaName}.job_time (ended);
-CREATE INDEX IF NOT EXISTS create_time ON {schemaName}.job_time (created);
-CREATE INDEX IF NOT EXISTS timing_wait ON {schemaName}.job_time (wait_until);
-CREATE INDEX IF NOT EXISTS timing_expire ON {schemaName}.job_time (dispatch_by);
-CREATE INDEX IF NOT EXISTS timing_combined_one ON {schemaName}.job_time (wait_until, dispatch_by);
-CREATE INDEX IF NOT EXISTS timing_combined_two ON {schemaName}.job_time (dispatch_by, wait_until);
-CREATE UNIQUE INDEX IF NOT EXISTS scopes ON {schemaName}.job_scopes (scope);
+CREATE INDEX IF NOT EXISTS jobs_group_type ON {schemaName}.jobs (queue_group, type);
+CREATE INDEX IF NOT EXISTS jobs_priority ON {schemaName}.jobs (queue_group, priority);
+CREATE INDEX IF NOT EXISTS job_status_completed_in_progress ON {schemaName}.job_status (completed, in_progress);
+CREATE INDEX IF NOT EXISTS job_status_completed_in_progress_modtime ON {schemaName}.job_status (completed, in_progress, mod_ts);
+CREATE INDEX IF NOT EXISTS job_time_ended ON {schemaName}.job_time (ended);
+CREATE INDEX IF NOT EXISTS job_time_created ON {schemaName}.job_time (created);
+CREATE INDEX IF NOT EXISTS job_time_wait_until ON {schemaName}.job_time (wait_until);
+CREATE INDEX IF NOT EXISTS job_time_dispatch_by ON {schemaName}.job_time (dispatch_by);
+CREATE INDEX IF NOT EXISTS job_time_combined_one ON {schemaName}.job_time (wait_until, dispatch_by);
+CREATE INDEX IF NOT EXISTS job_time_timing_combined_two ON {schemaName}.job_time (dispatch_by, wait_until);
+CREATE UNIQUE INDEX IF NOT EXISTS job_scopes_name ON {schemaName}.job_scopes (scope);
 `
 
 const getActiveGroups = `
