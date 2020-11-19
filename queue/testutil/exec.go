@@ -99,54 +99,67 @@ func RunSmokeTest(bctx context.Context, t *testing.T, test QueueTestCase) {
 							}
 						}
 
-						t.Run("SaveLockingCheck", func(t *testing.T) {
-							if test.OrderedSupported && !test.OrderedStartsBefore {
-								t.Skip("test does not support queues where queues don't accept work after dispatching")
-							}
-							ctx, cancel := context.WithCancel(bctx)
-							defer cancel()
-							name := RandomID()
+						if test.WaitUntilSupported {
+							t.Run("SaveLockingCheck", func(t *testing.T) {
+								if test.OrderedSupported && !test.OrderedStartsBefore {
+									t.Skip("test does not support queues where queues don't accept work after dispatching")
+								}
 
-							q, closer, err := test.Constructor(ctx, name, size.Size)
-							require.NoError(t, err)
-							defer func() { require.NoError(t, closer(ctx)) }()
+								ctx, cancel := context.WithCancel(bctx)
+								defer cancel()
+								name := RandomID()
 
-							require.NoError(t, runner.SetPool(q, size.Size))
-							require.NoError(t, err)
-							j := amboy.Job(job.NewShellJob("sleep 300", ""))
-							j.UpdateTimeInfo(amboy.JobTimeInfo{
-								WaitUntil: time.Now().Add(4 * amboy.LockTimeout),
-							})
-							require.NoError(t, q.Start(ctx))
-							require.NoError(t, q.Put(ctx, j))
+								q, closer, err := test.Constructor(ctx, name, size.Size)
+								require.NoError(t, err)
+								defer func() { require.NoError(t, closer(ctx)) }()
 
-							require.NoError(t, j.Lock(q.ID(), q.Info().LockTimeout))
-							require.NoError(t, q.Save(ctx, j))
+								require.NoError(t, runner.SetPool(q, size.Size))
+								require.NoError(t, err)
+								j := amboy.Job(job.NewShellJob("sleep 300", ""))
+								j.UpdateTimeInfo(amboy.JobTimeInfo{
+									WaitUntil: time.Now().Add(8 * amboy.LockTimeout),
+								})
+								require.NoError(t, q.Start(ctx))
+								require.NoError(t, q.Put(ctx, j))
 
-							if test.IsRemote {
-								// this errors because you can't save if you've double-locked,
-								// but only real remote drivers check locks.
 								require.NoError(t, j.Lock(q.ID(), q.Info().LockTimeout))
-								require.NoError(t, j.Lock(q.ID(), q.Info().LockTimeout))
-								require.Error(t, q.Save(ctx, j))
-							}
 
-							for i := 0; i < 25; i++ {
-								var ok bool
-								j, ok = q.Get(ctx, j.ID())
+								err = nil
+								count := 0
+								for i := 0; i < 20; i++ {
+									count = i
+									if err = q.Save(ctx, j); err == nil {
+										break
+									}
+									time.Sleep(100 * time.Millisecond)
+								}
+
+								require.NoError(t, err, "after: %d", count)
+
+								if test.IsRemote {
+									// this errors because you can't save if you've double-locked,
+									// but only real remote drivers check locks.
+									require.NoError(t, j.Lock(q.ID(), q.Info().LockTimeout))
+									require.NoError(t, j.Lock(q.ID(), q.Info().LockTimeout))
+									require.Error(t, q.Save(ctx, j))
+								}
+
+								for i := 0; i < 25; i++ {
+									var ok bool
+									j, ok = q.Get(ctx, j.ID())
+									require.True(t, ok)
+									require.NoError(t, j.Lock(q.ID(), q.Info().LockTimeout))
+									require.NoError(t, q.Save(ctx, j))
+								}
+
+								j, ok := q.Get(ctx, j.ID())
 								require.True(t, ok)
-								require.NoError(t, j.Lock(q.ID(), q.Info().LockTimeout))
-								require.NoError(t, q.Save(ctx, j))
-							}
 
-							j, ok := q.Get(ctx, j.ID())
-							require.True(t, ok)
-
-							require.NoError(t, j.Error())
-							q.Complete(ctx, j)
-							require.NoError(t, j.Error())
-						})
-
+								require.NoError(t, j.Error())
+								q.Complete(ctx, j)
+								require.NoError(t, j.Error())
+							})
+						}
 					})
 				}
 			})
